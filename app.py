@@ -1,14 +1,17 @@
 from flask import Flask, request, jsonify
 from PIL import Image
-import pytesseract
+import easyocr
 import re
 
 app = Flask(__name__)
 
+# Initialize the EasyOCR reader
+reader = easyocr.Reader(['en'])
+
 def extract_items_and_costs(image_path):
-    # Load the image and use Tesseract to do OCR
+    # Load the image and use EasyOCR to do OCR
     image = Image.open(image_path)
-    text = pytesseract.image_to_string(image)
+    text_lines = reader.readtext(image, detail=0)  # Get text only
 
     items = []
     
@@ -16,10 +19,8 @@ def extract_items_and_costs(image_path):
     price_pattern = r'(\d+\.\d{2}|\d+)'  # Matches prices like 12.34 or 12
     item_pattern = r'(.+?)\s+(₹?\s?\d+\.\d{2}|₹?\s?\d+)$'  # Matches lines with items and prices, with optional ₹ symbol
 
-    # Extracting lines from the OCR text
-    lines = text.split('\n')
-
-    for line in lines:
+    # Extract and process each line of text
+    for line in text_lines:
         line = line.strip()
         
         # Check for lines with both item names and prices
