@@ -1,76 +1,42 @@
 from flask import Flask, request, jsonify
-from PIL import Image
 import easyocr
 import re
+import os
 
 app = Flask(__name__)
-
-# Initialize the EasyOCR reader
 reader = easyocr.Reader(['en'])
 
-def extract_items_and_costs(image_path):
-    # Load the image and use EasyOCR to do OCR
-    image = Image.open(image_path)
-    text_lines = reader.readtext(image, detail=0)  # Get text only
-
+def extract_items_and_costs(text_lines):
     items = []
+    cost_pattern = re.compile(r'\b(\d+\.?\d*)\s*(?:INR|₹)?\b')  # Matches "99", "99.99", or "₹99"
     
-    # Common patterns for matching item and price lines, including support for ₹ symbol
-    price_pattern = r'(\d+\.\d{2}|\d+)'  # Matches prices like 12.34 or 12
-    item_pattern = r'(.+?)\s+(₹?\s?\d+\.\d{2}|₹?\s?\d+)$'  # Matches lines with items and prices, with optional ₹ symbol
-
-    # Extract and process each line of text
     for line in text_lines:
-        line = line.strip()
-        
-        # Check for lines with both item names and prices
-        if re.search(price_pattern, line):
-            # Use regex to match items with prices at the end
-            match = re.search(item_pattern, line)
-            if match:
-                # Capture the item name and price
-                item_name = match.group(1).strip()
-                cost = match.group(2).strip()
-                
-                # Normalize cost format and handle rupee symbol if present
-                try:
-                    cost = float(re.sub(r'[^\d.]', '', cost))  # Remove any non-numeric characters like ₹
-                except ValueError:
-                    continue  # Skip if cost is not a valid number
-
-                # Append item and cost to the list
-                items.append({"item": item_name, "cost": cost})
-                
-            else:
-                # Fallback for lines with split words (OCR sometimes splits words across lines)
-                words = line.split()
-                possible_cost = words[-1]
-                try:
-                    # Check if the last word is a price, if so, treat rest as item name
-                    cost = float(re.sub(r'[^\d.]', '', possible_cost))
-                    item_name = " ".join(words[:-1])
-                    items.append({"item": item_name, "cost": cost})
-                except ValueError:
-                    continue  # Skip if no valid price is found
-
+        match = cost_pattern.search(line)
+        if match:
+            item_name = line[:match.start()].strip()
+            item_cost = float(match.group(1))
+            items.append({"item": item_name, "cost": item_cost})
+    
     return items
 
-@app.route('/extract', methods=['POST'])
-def extract_from_bill():
-    if 'file' not in request.files:
-        return jsonify({"error": "No file part"}), 400
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({"error": "No selected file"}), 400
+@app.route('/read_bill', methods=['POST'])
+def read_bill():
+    if 'bill_image' not in request.files:
+        return jsonify({"error": "No image file provided"}), 400
     
-    # Save the uploaded file
-    file_path = "/mnt/data/" + file.filename
-    file.save(file_path)
-
+    image = request.files['bill_image']
+    
+    # OCR Processing
+    results = reader.readtext(image, detail=0)
+    
     # Extract items and costs
-    items = extract_items_and_costs(file_path)
+    items_and_costs = extract_items_and_costs(results)
     
-    return jsonify({"items": items})
+    if not items_and_costs:
+        return jsonify({"error": "No items or costs detected"}), 404
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    return jsonify({"items": items_and_costs})
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
